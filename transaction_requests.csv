@@ -1,0 +1,3 @@
+skip,request_name,method,url,auth_mode,bearer_token,app_api_key,integrator_id,timestamp,signature,principal,action,resource,priority,payload,context
+no,third_party_horse_view,POST,https://1hhow6m4td.execute-api.us-east-1.amazonaws.com/prod/3rd/start_a_transaction,,,,3RD000000001,{{timestamp}},{{signature}},P703300001,horse.get_assigned,all_horses,near_realtime,{},
+no,horse_view,POST,https://1hhow6m4td.execute-api.us-east-1.amazonaws.com/prod/hisa/start_a_transaction,bearer,{{bearerToken}},{{appApiKey}},,,,P703300001,horse.get_assigned,all_horses,near_realtime,{},

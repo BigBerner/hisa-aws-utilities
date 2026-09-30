@@ -1,0 +1,4 @@
+"HisaPersonId","BarredFromRacing","BirthDate","DisplayName","IsActive","IsCoveredPerson","IsUnregisteredPerson","Name","UserName","UUID"
+"P703300003","false","1950-12-06","Person who is sharee","true","true","false","{""FirstName"":{""S"":""person""},""LastName"":{""S"":""who is sharee""}}","sk00003","8b9d8472-e0d6-45ea-aed3-38e697ed6c14-c"
+"P703300002","false","1950-12-06","Person who is do","true","true","false","{""FirstName"":{""S"":""person""},""LastName"":{""S"":""who is do""}}","sk00002","8b9d8472-e0d6-45ea-aed3-38e697ed6c14-b"
+"P703300001","false","1950-12-06","Person who is rp","true","true","false","{""FirstName"":{""S"":""person""},""LastName"":{""S"":""who is rp""}}","sk00001","8b9d8472-e0d6-45ea-aed3-38e697ed6c14-a"
