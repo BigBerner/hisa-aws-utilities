@@ -1,6 +1,0 @@
-request_name,method,url,auth_mode,bearer_token,app_api_key,integrator_id,timestamp,signature,principal,action,resource,priority,payload,context
-horse_view,POST,https://1hhow6m4td.execute-api.us-east-1.amazonaws.com/prod/hisa/start_a_transaction,bearer,{{bearerToken}},{{appApiKey}},,,,P703300001,horse_view,H000000199,near_realtime,{},
-plr_edit,POST,https://1hhow6m4td.execute-api.us-east-1.amazonaws.com/prod/hisa/start_a_transaction,bearer,{{bearerToken}},{{appApiKey}},,,,P000000022,plr_edit,PLR000000001,near_realtime,{},"[{\horse\"":\""H000000199\""}]"""
-get_transaction_response,POST,https://1hhow6m4td.execute-api.us-east-1.amazonaws.com/prod/hisa/get_transaction_response,bearer,{{bearerToken}},{{appApiKey}},,,,P703300001,transaction_get_result,f84801fc-129b-447d-ab34-04e131e37ccc,near_realtime,{},
-third_party_horse_view,POST,https://1hhow6m4td.execute-api.us-east-1.amazonaws.com/prod/3rd/start_a_transaction,integrator,,,,{{timestamp}},{{signature}},P703300001,horse.get_assigned,all_horses,near_realtime,{},
-third_party_get_result,POST,https://1hhow6m4td.execute-api.us-east-1.amazonaws.com/prod/3rd/get_transaction_response,integrator,,,3RD000000001,{{timestamp}},{{signature}},P703300001,transaction.get_result,TXN-20260922-000002,near_realtime,{},
