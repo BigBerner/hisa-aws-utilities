@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -33,6 +34,9 @@ REQUESTS_CSV_PATH = Path(__file__).with_name("transaction_requests.csv")
 INTEGRATOR_SECRETS_CSV_PATH = Path(__file__).with_name("integrator_secrets.csv")
 PEOPLE_CSV_PATH = Path(__file__).with_name("people.csv")
 CREDENTIALS_PATH = Path(__file__).with_name("userid_and_password.csv")
+GET_RESULT_ACTION = "transaction_get_result"
+TRANSACTION_ID_KEYS = ("transaction_id", "transactionId", "trans_id", "transId", "id")
+TRANS_ID_PLACEHOLDER = re.compile(r"\{\{\s*trans_id_R(\d+)\s*\}\}", re.IGNORECASE)
 
 
 class CognitoTokenProvider:
@@ -151,6 +155,38 @@ def parse_json(value: str, default):
     return json.loads(value) if value.strip() else default
 
 
+def find_transaction_id(data) -> str:
+    """Return the first transaction ID found in a (possibly nested) JSON response."""
+    if isinstance(data, dict):
+        for key in TRANSACTION_ID_KEYS:
+            value = data.get(key)
+            if isinstance(value, (str, int)) and str(value):
+                return str(value)
+        children = data.values()
+    elif isinstance(data, list):
+        children = data
+    else:
+        return ""
+
+    for child in children:
+        found = find_transaction_id(child)
+        if found:
+            return found
+    return ""
+
+
+def substitute_transaction_ids(value: str, transaction_ids: dict[int, str]) -> str:
+    """Replace {{trans_id_R<n>}} with the transaction ID returned by CSV row n."""
+
+    def replace(match: re.Match) -> str:
+        row_number = int(match.group(1))
+        if row_number not in transaction_ids:
+            raise ValueError(f"No transaction ID available from row R{row_number}")
+        return transaction_ids[row_number]
+
+    return TRANS_ID_PLACEHOLDER.sub(replace, value)
+
+
 def build_request(
     row: dict[str, str],
     integrator_keys: dict[str, str],
@@ -208,8 +244,9 @@ def build_request(
         "action": row["action"],
         "resource": row["resource"],
         "priority": row["priority"],
-        "payload": parse_json(row.get("payload", ""), {}),
     }
+    if row["action"] != GET_RESULT_ACTION:
+        body["payload"] = parse_json(row.get("payload", ""), {})
     context = parse_json(row.get("context", ""), None)
     if context is not None:
         body["context"] = context
@@ -222,8 +259,10 @@ def build_request(
     )
 
 
-def print_request(request: Request) -> None:
+def print_request(request: Request | None) -> None:
     """Print the method, URL, headers, and body of a sent request."""
+    if request is None:
+        return
     print(f"  Request: {request.get_method()} {request.full_url}")
     for name, value in request.header_items():
         print(f"    {name}: {value}")
@@ -235,18 +274,33 @@ def send_requests() -> None:
     """Send every non-skipped request from the input CSV."""
     integrator_keys = load_integrator_keys()
     token_provider = CognitoTokenProvider()
+    # Transaction IDs keyed by 1-based CSV data row number (R1, R2, ...).
+    transaction_ids: dict[int, str] = {}
     with REQUESTS_CSV_PATH.open("r", encoding="utf-8-sig", newline="") as csv_file:
-        for row in csv.DictReader(csv_file):
+        for row_number, row in enumerate(csv.DictReader(csv_file), start=1):
             if row.get("skip", "").strip().lower() in {"yes", "true", "1"}:
-                print(f"Skipped {row.get('request_name', '<unnamed>')}")
+                print(f"Skipped R{row_number} {row.get('request_name', '<unnamed>')}")
                 continue
 
-            request_name = row.get("request_name", "<unnamed>")
+            request_name = f"R{row_number} {row.get('request_name', '<unnamed>')}"
+            request = None
             try:
+                row = {
+                    key: substitute_transaction_ids(value or "", transaction_ids)
+                    for key, value in row.items()
+                    if key is not None
+                }
                 request = build_request(row, integrator_keys, token_provider)
                 with urlopen(request, timeout=30) as response:
                     response_body = response.read().decode("utf-8")
                     print(f"{request_name}: {response.status} {response_body}")
+                try:
+                    transaction_id = find_transaction_id(json.loads(response_body))
+                except json.JSONDecodeError:
+                    transaction_id = ""
+                if transaction_id:
+                    transaction_ids[row_number] = transaction_id
+                    print(f"  trans_id_R{row_number} = {transaction_id}")
             except HTTPError as error:
                 error_body = error.read().decode("utf-8", errors="replace")
                 print(f"{request_name}: {error.code} {error_body}")
