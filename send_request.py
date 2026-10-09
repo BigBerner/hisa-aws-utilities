@@ -15,6 +15,7 @@ import hmac
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -35,6 +36,9 @@ INTEGRATOR_SECRETS_CSV_PATH = Path(__file__).with_name("integrator_secrets.csv")
 PEOPLE_CSV_PATH = Path(__file__).with_name("people.csv")
 CREDENTIALS_PATH = Path(__file__).with_name("userid_and_password.csv")
 GET_RESULT_ACTION = "transaction_get_result"
+RESULT_POLL_INTERVAL_SECONDS = 0.5
+MAX_RESULT_POLL_ATTEMPTS = 60
+STATUS_KEYS = ("status", "state", "transaction_status", "transactionStatus")
 TRANSACTION_ID_KEYS = ("transaction_id", "transactionId", "trans_id", "transId", "id")
 TRANS_ID_PLACEHOLDER = re.compile(r"\{\{\s*trans_id_R(\d+)\s*\}\}", re.IGNORECASE)
 
@@ -175,6 +179,19 @@ def find_transaction_id(data) -> str:
     return ""
 
 
+def is_processing(data) -> bool:
+    """Return True if a (possibly nested) JSON response reports a processing status."""
+    if isinstance(data, dict):
+        for key in STATUS_KEYS:
+            value = data.get(key)
+            if isinstance(value, str) and value.strip().lower() == "processing":
+                return True
+        return any(is_processing(child) for child in data.values())
+    if isinstance(data, list):
+        return any(is_processing(child) for child in data)
+    return False
+
+
 def substitute_transaction_ids(value: str, transaction_ids: dict[int, str]) -> str:
     """Replace {{trans_id_R<n>}} with the transaction ID returned by CSV row n."""
 
@@ -290,14 +307,31 @@ def send_requests() -> None:
                     for key, value in row.items()
                     if key is not None
                 }
-                request = build_request(row, integrator_keys, token_provider)
-                with urlopen(request, timeout=30) as response:
-                    response_body = response.read().decode("utf-8")
-                    print(f"{request_name}: {response.status} {response_body}")
-                try:
-                    transaction_id = find_transaction_id(json.loads(response_body))
-                except json.JSONDecodeError:
-                    transaction_id = ""
+                is_get_result = row["action"] == GET_RESULT_ACTION
+                for attempt in range(1, MAX_RESULT_POLL_ATTEMPTS + 1):
+                    request = build_request(row, integrator_keys, token_provider)
+                    with urlopen(request, timeout=30) as response:
+                        response_body = response.read().decode("utf-8")
+                        print(f"{request_name}: {response.status} {response_body}")
+                    try:
+                        response_json = json.loads(response_body)
+                    except json.JSONDecodeError:
+                        response_json = None
+                    if not (is_get_result and is_processing(response_json)):
+                        break
+                    if attempt == MAX_RESULT_POLL_ATTEMPTS:
+                        print(
+                            f"  still processing after {attempt} attempts; giving up"
+                        )
+                        break
+                    print(
+                        f"  processing; retrying in {RESULT_POLL_INTERVAL_SECONDS}s "
+                        f"(attempt {attempt + 1}/{MAX_RESULT_POLL_ATTEMPTS})"
+                    )
+                    time.sleep(RESULT_POLL_INTERVAL_SECONDS)
+                transaction_id = (
+                    find_transaction_id(response_json) if response_json else ""
+                )
                 if transaction_id:
                     transaction_ids[row_number] = transaction_id
                     print(f"  trans_id_R{row_number} = {transaction_id}")
