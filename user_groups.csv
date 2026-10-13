@@ -1,0 +1,10 @@
+PersonId,AuthGroupId,Notes
+P703300001,CoveredPerson,Responsible Person general group
+P703300001,ResponsiblePerson,Responsible Person role group
+P703300002,CoveredPerson,Designated Owner general group
+P703300002,DesignatedOwner,Designated Owner role group
+P703300003,CoveredPerson,Horse Sharee general group
+P703300003,HorseSharee,Horse Sharee role group
+P703300004,CoveredPerson,Attending Vet general group
+P703300004,vet,Attending Vet role group
+P703300004,AttendingVet,Attending Vet system group
