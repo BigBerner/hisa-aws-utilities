@@ -24,6 +24,7 @@ from urllib.request import urlopen
 
 from botocore.exceptions import ClientError
 
+from src.transaction_tracking import record_transaction_id
 from send_request import (
     GET_RESULT_ACTION,
     REQUESTS_CSV_PATH,
@@ -78,6 +79,7 @@ def run_cycle(
     if not transaction_id:
         raise TransactionError(f"no transaction ID in response: {start_body}")
 
+    record_transaction_id(transaction_id)
     poll_row = {**result_row, "resource": transaction_id}
     sleep(INITIAL_RESULT_DELAY_SECONDS)
     for poll in range(1, MAX_RESULT_POLLS + 1):

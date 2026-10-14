@@ -13,17 +13,22 @@ import json
 import secrets
 import string
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
+
+if TYPE_CHECKING:
+    from mypy_boto3_dynamodb.service_resource import DynamoDBServiceResource
 
 
 REGION = "us-east-1"
 PROFILE = "ResourceCreator"
 USER_POOL_ID = "us-east-1_MxDxfUblP"
 TABLE_NAME = "CoveredPerson-dev1"
-PEOPLE_CSV_PATH = Path(__file__).with_name("people.csv")
-CREDENTIALS_PATH = Path(__file__).with_name("userid_and_password.csv")
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+PEOPLE_CSV_PATH = DATA_DIR / "people.csv"
+CREDENTIALS_PATH = DATA_DIR / "userid_and_password.csv"
 
 
 def generate_password(length: int = 24) -> str:
@@ -79,9 +84,11 @@ def main() -> None:
     people = load_people()
     session = boto3.Session(profile_name=PROFILE, region_name=REGION)
     cognito = session.client("cognito-idp")
-    table = session.resource("dynamodb").Table(TABLE_NAME)
+    dynamodb = cast("DynamoDBServiceResource", session.resource("dynamodb"))
+    table = dynamodb.Table(TABLE_NAME)
     deserializer = TypeDeserializer()
 
+    CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with CREDENTIALS_PATH.open("w", encoding="utf-8", newline="") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=("username", "password"))
         writer.writeheader()

@@ -12,31 +12,25 @@ import csv
 import json
 import secrets
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import boto3
+
+if TYPE_CHECKING:
+    from mypy_boto3_dynamodb.service_resource import DynamoDBServiceResource
 
 
 REGION = "us-east-1"
 PROFILE = "ResourceCreator"
 TABLE_NAME = "third-party-integrators-dev"
-INTEGRATORS_CSV_PATH = Path(__file__).with_name("integrators.csv")
-LEGACY_CSV_PATH = Path(__file__).with_name("integratos.csv")
-SECRETS_CSV_PATH = Path(__file__).with_name("integrator_secrets.csv")
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+INTEGRATORS_CSV_PATH = DATA_DIR / "integrators.csv"
+SECRETS_CSV_PATH = DATA_DIR / "integrator_secrets.csv"
 
 
 def load_integrators() -> list[dict[str, str]]:
-    """Load integrator records from the requested CSV filename."""
-    csv_path = (
-        INTEGRATORS_CSV_PATH
-        if INTEGRATORS_CSV_PATH.exists()
-        else LEGACY_CSV_PATH
-    )
-    if not csv_path.exists():
-        raise FileNotFoundError(
-            f"Neither {INTEGRATORS_CSV_PATH.name} nor {LEGACY_CSV_PATH.name} was found"
-        )
-
-    with csv_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+    """Load integrator records from data/integrators.csv."""
+    with INTEGRATORS_CSV_PATH.open("r", encoding="utf-8-sig", newline="") as csv_file:
         return list(csv.DictReader(csv_file))
 
 
@@ -67,6 +61,7 @@ def create_integrator_secrets(
         records_by_integrator.setdefault(record["pk"], []).append(record)
 
     created_count = 0
+    SECRETS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
     with SECRETS_CSV_PATH.open("w", encoding="utf-8", newline="") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=("integrator_id", "key"))
         writer.writeheader()
@@ -113,7 +108,8 @@ def main() -> None:
     """Load integrator records into DynamoDB."""
     integrators = load_integrators()
     session = boto3.Session(profile_name=PROFILE, region_name=REGION)
-    table = session.resource("dynamodb").Table(TABLE_NAME)
+    dynamodb = cast("DynamoDBServiceResource", session.resource("dynamodb"))
+    table = dynamodb.Table(TABLE_NAME)
     secretsmanager = session.client("secretsmanager")
     loaded_count = populate_table(table, integrators)
     print(f"Loaded {loaded_count} record(s) into {TABLE_NAME}")

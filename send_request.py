@@ -24,6 +24,7 @@ from urllib.request import Request, urlopen
 import boto3
 from botocore.exceptions import ClientError
 
+from src.transaction_tracking import record_transaction_id
 
 REGION = "us-east-1"
 PROFILE = "ResourceCreator"
@@ -31,10 +32,11 @@ USER_POOL_ID = "us-east-1_MxDxfUblP"
 COGNITO_CLIENT_ID = "opovhq5sep0imt5g0kvpakifb"
 HISA_APP_API_KEY = "abc123-super-secret"
 HISA_SCREEN_ID = "HP-4"
-REQUESTS_CSV_PATH = Path(__file__).with_name("transaction_requests.csv")
-INTEGRATOR_SECRETS_CSV_PATH = Path(__file__).with_name("integrator_secrets.csv")
-PEOPLE_CSV_PATH = Path(__file__).with_name("people.csv")
-CREDENTIALS_PATH = Path(__file__).with_name("userid_and_password.csv")
+DATA_DIR = Path(__file__).resolve().parent / "data"
+REQUESTS_CSV_PATH = DATA_DIR / "transaction_requests.csv"
+INTEGRATOR_SECRETS_CSV_PATH = DATA_DIR / "integrator_secrets.csv"
+PEOPLE_CSV_PATH = DATA_DIR / "people.csv"
+CREDENTIALS_PATH = DATA_DIR / "userid_and_password.csv"
 GET_RESULT_ACTION = "transaction_get_result"
 RESULT_POLL_INTERVAL_SECONDS = 0.5
 MAX_RESULT_POLL_ATTEMPTS = 60
@@ -333,6 +335,8 @@ def send_requests() -> None:
                     find_transaction_id(response_json) if response_json else ""
                 )
                 if transaction_id:
+                    if not is_get_result:
+                        record_transaction_id(transaction_id)
                     transaction_ids[row_number] = transaction_id
                     print(f"  trans_id_R{row_number} = {transaction_id}")
             except HTTPError as error:

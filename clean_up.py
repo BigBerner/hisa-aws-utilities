@@ -3,16 +3,24 @@
 # @Date:   2026-09-29 08:47:29
 # @Email:  steve.keech@hisaus.org
 # @Last Modified by:   Steve Keech
-# @Last Modified time: 2026-09-29 10:37:26
+# @Last Modified time: 2026-10-14 06:12:59
 # 
 
-"""Delete all objects from the configured AWS resources."""
+"""Delete tracked transactions and the existing CSV-defined test setup."""
 
 import csv
 import os
 from pathlib import Path
+import re
+from typing import TYPE_CHECKING, cast
 
 import boto3
+from botocore.exceptions import ClientError
+
+from src.transaction_tracking import load_transaction_ids, transaction_id_pattern
+
+if TYPE_CHECKING:
+    from mypy_boto3_dynamodb.service_resource import DynamoDBServiceResource
 
 
 REGION = "us-east-1"
@@ -21,22 +29,28 @@ TABLE_NAMES = (
     "enterprise-transaction-queue-dev",
     "avp-entities-and-resources-dev",
 )
-QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/285463978628/authenticated-requests-dev.fifo"
-BUCKET_NAME = "transaction-payloads-dev"
+BUCKET_NAMES = ("transaction-payloads-dev", "transaction-responses-dev")
 USER_POOL_ID = "us-east-1_MxDxfUblP"
-PEOPLE_CSV_PATH = Path(__file__).with_name("people.csv")
+DATA_DIR = Path(__file__).resolve().parent / "data"
+PEOPLE_CSV_PATH = DATA_DIR / "people.csv"
 USER_POOL_USERNAME_FIELDS = ("user_ir", "UserName")
 USER_TABLE_NAME = "CoveredPerson-dev1"
 INTEGRATORS_TABLE_NAME = "third-party-integrators-dev"
-INTEGRATORS_CSV_PATH = Path(__file__).with_name("integratos.csv")
-INTEGRATOR_SECRETS_CSV_PATH = Path(__file__).with_name("integrator_secrets.csv")
-CREDENTIALS_PATH = Path(__file__).with_name("userid_and_password.csv")
+INTEGRATORS_CSV_PATH = DATA_DIR / "integrators.csv"
+INTEGRATOR_SECRETS_CSV_PATH = DATA_DIR / "integrator_secrets.csv"
+CREDENTIALS_PATH = DATA_DIR / "userid_and_password.csv"
 
 
-def delete_all_items(table) -> int:
-    """Delete all items from a DynamoDB table and return the item count."""
+def delete_transaction_items(table, pattern: re.Pattern[str]) -> int:
+    """Delete only records with a tracked, complete transaction ID in a key."""
     deleted_count = 0
-    scan_kwargs = {}
+    key_names = [key["AttributeName"] for key in table.key_schema]
+    attribute_names = {f"#k{i}": name for i, name in enumerate(key_names)}
+    scan_kwargs = {
+        "ProjectionExpression": ", ".join(attribute_names),
+        "ExpressionAttributeNames": attribute_names,
+        "ConsistentRead": True,
+    }
 
     while True:
         response = table.scan(**scan_kwargs)
@@ -44,15 +58,46 @@ def delete_all_items(table) -> int:
 
         with table.batch_writer() as batch:
             for item in items:
-                key_names = [key["AttributeName"] for key in table.key_schema]
-                batch.delete_item(Key={key: item[key] for key in key_names})
-                deleted_count += 1
+                if any(
+                    isinstance(item[key], str) and pattern.search(item[key])
+                    for key in key_names
+                ):
+                    batch.delete_item(Key={key: item[key] for key in key_names})
+                    deleted_count += 1
 
         last_evaluated_key = response.get("LastEvaluatedKey")
         if not last_evaluated_key:
             break
         scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
 
+    return deleted_count
+
+
+def delete_transaction_objects(s3, bucket_name: str, pattern: re.Pattern[str]) -> int:
+    """Delete matching current S3 objects, checking partial batch failures."""
+    deleted_count = 0
+    paginator = s3.get_paginator("list_objects_v2")
+    try:
+        for page in paginator.paginate(Bucket=bucket_name):
+            objects = [
+                {"Key": obj["Key"]}
+                for obj in page.get("Contents", [])
+                if pattern.search(obj["Key"])
+            ]
+            if not objects:
+                continue
+            response = s3.delete_objects(
+                Bucket=bucket_name, Delete={"Objects": objects}
+            )
+            if response.get("Errors"):
+                raise RuntimeError(
+                    f"S3 deletion failed in {bucket_name}: {response['Errors']}"
+                )
+            deleted_count += len(response.get("Deleted", []))
+    except ClientError as error:
+        if error.response["Error"]["Code"] != "NoSuchBucket":
+            raise
+        print(f"Bucket {bucket_name} does not exist; no objects deleted there")
     return deleted_count
 
 
@@ -82,7 +127,7 @@ def delete_people_records(table, people: list[dict[str, str]]) -> int:
 
 
 def load_integrators() -> list[dict[str, str]]:
-    """Load integrator table keys from integratos.csv."""
+    """Load integrator table keys from integrators.csv."""
     with INTEGRATORS_CSV_PATH.open(
         "r", encoding="utf-8-sig", newline=""
     ) as csv_file:
@@ -124,29 +169,31 @@ def delete_integrator_secrets(secretsmanager, integrators: list[dict[str, str]])
 
 
 def main() -> None:
-    """Delete all records from both DynamoDB tables."""
+    """Clean tracked transactions without purging shared tables/buckets/SQS."""
     os.environ.setdefault("AWS_DEFAULT_REGION", REGION)
+    transaction_ids = load_transaction_ids()
+    pattern = transaction_id_pattern(transaction_ids) if transaction_ids else None
     people = load_people()
     integrators = load_integrators()
     session = boto3.Session(profile_name=PROFILE, region_name=REGION)
-    dynamodb = session.resource("dynamodb")
-    sqs = session.client("sqs")
-    s3 = session.resource("s3")
+    dynamodb = cast("DynamoDBServiceResource", session.resource("dynamodb"))
+    s3 = session.client("s3")
     cognito = session.client("cognito-idp")
     secretsmanager = session.client("secretsmanager")
     covered_person_table = dynamodb.Table(USER_TABLE_NAME)
     integrators_table = dynamodb.Table(INTEGRATORS_TABLE_NAME)
 
-    for table_name in TABLE_NAMES:
-        table = dynamodb.Table(table_name)
-        deleted_count = delete_all_items(table)
-        print(f"Deleted {deleted_count} item(s) from {table_name}")
+    if pattern is None:
+        print("No saved transaction IDs; skipping transaction table/bucket cleanup")
+    else:
+        for table_name in TABLE_NAMES:
+            table = dynamodb.Table(table_name)
+            deleted_count = delete_transaction_items(table, pattern)
+            print(f"Deleted {deleted_count} transaction item(s) from {table_name}")
 
-    sqs.purge_queue(QueueUrl=QUEUE_URL)
-    print(f"Purged messages from {QUEUE_URL}")
-
-    s3.Bucket(BUCKET_NAME).objects.delete()
-    print(f"Deleted objects from s3://{BUCKET_NAME}")
+        for bucket_name in BUCKET_NAMES:
+            deleted_count = delete_transaction_objects(s3, bucket_name, pattern)
+            print(f"Deleted {deleted_count} transaction object(s) from s3://{bucket_name}")
 
     deleted_people_count = delete_people_records(covered_person_table, people)
     print(f"Deleted {deleted_people_count} record(s) from {USER_TABLE_NAME}")

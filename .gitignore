@@ -1,3 +1,8 @@
 /integrator_secrets.csv
 /userid_and_password.csv
 /not_transaction_requests.csv
+/sent_transactions.sqlite3*
+/data/integrator_secrets.csv
+/data/userid_and_password.csv
+/data/not_transaction_requests.csv
+/data/sent_transactions.sqlite3*
